@@ -20,4 +20,7 @@ def migrate():
     cursor.close()
 
 
+db.create_function('myLower', 1, lambda x: x.lower())
+
+
 migrate()

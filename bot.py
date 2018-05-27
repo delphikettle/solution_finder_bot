@@ -7,7 +7,9 @@ from telebot import types
 from config import token, db
 
 markup_common = types.ReplyKeyboardMarkup()
+markup_common.row('/🔍 Поиск', '/🗞 Новые вопросы', '/⁉ Помощь')
 markup_common.row('/↩ назад', '/⤵️ открыть')
+
 
 apihelper.proxy = {
     # 'http':'socks5://138.201.46.150:1080',
@@ -17,6 +19,32 @@ apihelper.proxy = {
 }
 bot = telebot.TeleBot(token)
 
+help_text = '''А туть глюпяя Мася дользня сделять тексть помоси
+типа такая комадна для того-то, такая для того, пользоваться ей так, а этой так
+'''
+
+
+@bot.message_handler(commands=['🔍'])
+def search_from_menu_message(message):
+    bot.send_message(message.from_user.id,
+                     'Чтобы найти вопросы по запросу, отправьте сообщение в виде:\n/search ваш запрос',
+                     reply_markup=markup_common)
+
+
+@bot.message_handler(commands=['search'])
+def search_message(message):
+    cursor = db.cursor()
+    text = str(message.text).replace('/search', '').strip().lower().replace('/', '\\x2f')
+    cursor.execute('update User set state=state||? WHERE id=?',
+                   ['s({})/'.format(text), message.from_user.id])
+    db.commit()
+    cursor.close()
+    send_stuff_by_state(message.from_user.id)
+
+
+@bot.message_handler(commands=['help', '⁉'])
+def help_message(message):
+    bot.send_message(message.chat.id, help_text, reply_markup=markup_common)
 
 @bot.message_handler(commands=['↩', '🔙'])
 def back_command(message):
@@ -60,6 +88,20 @@ def open_command(message):
     item_id = dispute_id or feedback_id
     cursor.execute('update User set state=state||? WHERE id=?',
                    ['{}{}/'.format(step_type, item_id), message.from_user.id])
+    db.commit()
+    cursor.close()
+    send_stuff_by_state(message.from_user.id)
+
+
+@bot.message_handler(commands=['🗞', 'feed'])
+def feed(message):
+    cursor = db.cursor()
+    cursor.execute('SELECT last_dispute_id FROM User WHERE id=?', [message.from_user.id])
+    user_last_id, = cursor.fetchall()[0]
+    cursor.execute('SELECT id FROM Dispute ORDER BY  -id LIMIT 1;')
+    real_last_id, = cursor.fetchall()[0]
+    cursor.execute('UPDATE User SET last_dispute_id=?,state=state||? WHERE id=?',
+                   [real_last_id, 'f({}-{})/'.format(user_last_id, real_last_id), message.from_user.id])
     db.commit()
     cursor.close()
     send_stuff_by_state(message.from_user.id)
@@ -112,7 +154,6 @@ def send_stuff_by_state(user_id):
                                             '{0}✔\nОтвет №{1}: {2}'.format(round(rating, 2), answer_id, content),
                                             reply_to_message_id=message.message_id)
                     connect_message(mess, feedback_id=answer_id)
-
             elif step_type == 'a':
                 answer_id = int(step[1:])
                 cursor.execute('select content, rating from Feedback where id=? and is_answer', [answer_id])
@@ -146,7 +187,6 @@ def send_stuff_by_state(user_id):
                         round(rating, 2), comment_id, content),
                                             reply_to_message_id=message.message_id, reply_markup=markup_common)
                     connect_message(mess, feedback_id=comment_id)
-
             elif step_type == 'c':
                 main_comment_id = int(step[1:])
                 cursor.execute('select content, for, rating from Feedback where id=? and not is_answer',
@@ -183,9 +223,59 @@ def send_stuff_by_state(user_id):
                         round(rating, 2), comment_id, content),
                                             reply_to_message_id=message.message_id, reply_markup=markup_common)
                     connect_message(mess, feedback_id=comment_id)
+            elif step_type == 'f':
+                user_last_id, real_last_id = [int(i) for i in step[2:-1].split('-')]
+                cursor.execute('SELECT id,caption FROM Dispute WHERE id BETWEEN ? AND ?',
+                               [user_last_id + 1, real_last_id])
+                new = False
+                for dispute_id, caption in cursor.fetchall():
+                    new = True
+                    mess = bot.send_message(user_id, 'Вопрос №{}: {}'.format(dispute_id, caption),
+                                            reply_markup=markup_common)
+                    connect_message(mess, dispute_id=dispute_id)
+                if not new:
+                    bot.send_message(user_id, 'Новых вопросов нет)', reply_markup=markup_common)
+                    path.remove(step)
+                    path = path[:-1]
+                else:
+                    while len(path) > 1 and (path[-1] == '' or path[-1][0] == 'f'):
+                        path = path[:-1]
+                    path.append(step)
+                state = '/'.join(path) + '/'
+                cursor.execute('UPDATE User SET state=? WHERE id=?', [state, user_id])
+                db.commit()
+            elif step_type == 's':
+                query = step[2:-1].replace('\\x2f', '/')
+                cursor.execute(
+                    "select id, caption, content from Dispute WHERE myLower(caption) like '%{0}%' or myLower(content) LIKE '%{0}%'".format(
+                        query))
+                found = False
+                for dispute_id, caption, content in cursor.fetchall():
+                    found = True
+                    mess = bot.send_message(user_id, 'Вопрос №{}: {}\n{}'.format(dispute_id, caption, content))
+                    connect_message(mess, dispute_id=dispute_id)
+                if not found:
+                    bot.send_message(user_id, 'По данному запросу вопросов не найдено')
+                    path.remove(step)
+                    path = path[:-1]
+                else:
+                    while len(path) > 1 and (path[-1] == '' or path[-1][0] == 's'):
+                        path = path[:-1]
+                    path.append(step)
+                state = '/'.join(path) + '/'
+                cursor.execute('UPDATE User SET state=? WHERE id=?', [state, user_id])
+                db.commit()
+
+
+
+
+
+
 
             cursor.close()
             return
+
+    bot.send_message(user_id, 'Главное меню', reply_markup=markup_common)
 
     cursor.close()
 
@@ -215,9 +305,10 @@ def start(message):
     try:
         cursor.execute("insert into User(id,state) values ({0},'{1}')".format(message.from_user.id, '/'))
         db.commit()
+        bot.send_message(message.from_user.id, 'Добро пожаловать! Введи /help, чтобы получить помощь')
     except Exception as e:
         if 'UNIQUE' in e.args[0]:
-            pass
+            bot.send_message(message.from_user.id, 'С возвращением!')
         else:
             raise
     cursor.close()
@@ -284,8 +375,8 @@ def reply_messages(message):
     else:
         content = text
 
-    if is_answer and for_sign is not None and content:
-        bot.send_message(message.chat.id, 'Ты тупой? Нельзя отвечать, оценивая вопрос, дубина',
+    if is_answer and for_sign is not None:
+        bot.send_message(message.chat.id, 'Ты тупой? Нельзя оценивать вопрос, дубина',
                          reply_markup=markup_common)
         cursor.close()
         return
@@ -295,32 +386,23 @@ def reply_messages(message):
                    params)
     sent_message = bot.send_message(message.chat.id,
                                     (('Ответ' if is_answer else 'Коммент') + ' успешно создан') if content else (
-                                            ('Вопрос' if is_answer else 'Ответ/коммент') + ' успешно оценён'),
+                                        'Ответ/коммент успешно оценён'),
                                     reply_markup=markup_common)
-    if content:
-        connect_message(message, feedback_id=cursor.lastrowid)
-        connect_message(sent_message, feedback_id=cursor.lastrowid)
-    feedback_id = cursor.lastrowid
-    cursor.execute('update User set state=state||? WHERE id=?',
-                   ['{}{}/'.format('a' if is_answer else 'c', cursor.lastrowid), message.from_user.id])
-    db.commit()
     update_feedback_rating(feedback_id)
-    send_stuff_by_state(message.from_user.id)
+    feedback_id = cursor.lastrowid
+    if content:
+        connect_message(message, feedback_id=feedback_id)
+        connect_message(sent_message, feedback_id=feedback_id)
+        cursor.execute('update User set state=state||? WHERE id=?',
+                       ['{}{}/'.format('a' if is_answer else 'c', cursor.lastrowid), message.from_user.id])
+        db.commit()
+        send_stuff_by_state(message.from_user.id)
     cursor.close()
 
 
 @bot.message_handler(content_types=['text'])
 def repeat_all_messages(message):
-    print(dir(message))
-    print(message.text)
-    print(message.message_id)
-    print(message.forward_from)
-    print(message.reply_to_message)
-    print(message.entities)
-    print('user', message.from_user)
-    print('chat', message.chat)
-    bot.send_message(message.chat.id, message.text, reply_markup=markup_common)
-    send_stuff_by_state(message.from_user.id)
+    bot.send_message(message.chat.id, 'Введи /help, чтобы получить помощь', reply_markup=markup_common)
 
 
 if __name__ == '__main__':

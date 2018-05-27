@@ -1,15 +1,14 @@
 CREATE TABLE User (
-  id             INTEGER PRIMARY KEY UNIQUE,
-  state          string,
-  lst_dispute_id INTEGER
+  id              INTEGER PRIMARY KEY UNIQUE,
+  state           string,
+  last_dispute_id INTEGER DEFAULT 0
 );
 
 CREATE TABLE Dispute (
   id      INTEGER PRIMARY KEY AUTOINCREMENT,
   caption string,
   content TEXT,
-  user_id INTEGER,
-  rating  FLOAT
+  user_id INTEGER
 );
 
 CREATE TABLE Feedback (
