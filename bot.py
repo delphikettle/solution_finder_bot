@@ -7,8 +7,8 @@ from telebot import types
 from config import token, db
 
 markup_common = types.ReplyKeyboardMarkup()
-markup_common.row('/🔍 Поиск', '/🗞 Новые вопросы', '/⁉ Помощь')
-markup_common.row('/↩ назад', '/⤵️ открыть')
+markup_common.row('/🔍 Поиск', '/🗞 Новые вопросы', '/❓ Добавить вопрос')
+markup_common.row('/↩ Назад', '/⤵️ Открыть', '/⁉ Помощь')
 
 
 apihelper.proxy = {
@@ -19,10 +19,19 @@ apihelper.proxy = {
 }
 bot = telebot.TeleBot(token)
 
-help_text = '''А туть глюпяя Мася дользня сделять тексть помоси
-типа такая комадна для того-то, такая для того, пользоваться ей так, а этой так
+help_text = '''Добро пожаловать в SolutionFinderBot. Чтобы создать дискуссию, нажмите "❓Добавить вопрос". \n
+Чтобы просмотреть новые вопросы, нажмите на кнопку "🗞 Новые вопросы". \n
+Чтобы найти вопросы по ключевому слову, нажмите на "🔍Поиск". \n
+Чтобы просмотреть ответы к вопросу, выберите вопрос и перешлите его  с нажатием на кнопку "⤵️ Открыть"\n
+Чтобы оценить  ответ или комментарий и прокомментировать, отправьте его с сообщением + или - и на новой строке напишите свой комментарий. \n
 '''
 
+
+@bot.message_handler(commands=['❓'])
+def search_from_menu_message(message):
+    bot.send_message(message.from_user.id,
+                     'Чтобы создать дискуссию, введите /new_dispute, после чего через пробел введите свой вопрос. Если хотите оставить пояснение к вопросу, введите его на новой строке после вопроса. ',
+                     reply_markup=markup_common)
 
 @bot.message_handler(commands=['🔍'])
 def search_from_menu_message(message):
@@ -71,7 +80,8 @@ def open_command(message):
         message.chat.id, message.reply_to_message.message_id))
     rows = cursor.fetchall()
     if not rows:
-        bot.send_message(message.chat.id, 'Ты чот попутал, не на что отвечать)', reply_markup=markup_common)
+        bot.send_message(message.chat.id, 'Ой! Вы что-то перепутали, тут не на что отвечать!',
+                         reply_markup=markup_common)
         cursor.close()
         return
 
@@ -99,7 +109,7 @@ def feed(message):
     cursor.execute('SELECT last_dispute_id FROM User WHERE id=?', [message.from_user.id])
     user_last_id, = cursor.fetchall()[0]
     cursor.execute('SELECT id FROM Dispute ORDER BY  -id LIMIT 1;')
-    real_last_id, = cursor.fetchall()[0]
+    real_last_id, = cursor.fetchall()[0]  # todo fix falling
     cursor.execute('UPDATE User SET last_dispute_id=?,state=state||? WHERE id=?',
                    [real_last_id, 'f({}-{})/'.format(user_last_id, real_last_id), message.from_user.id])
     db.commit()
@@ -130,22 +140,15 @@ def send_stuff_by_state(user_id):
 
                 # get answers
                 answers = []
-                pluses, minuses = 0, 0
                 cursor.execute(
-                    'select id, content, for, rating from Feedback where parent_id=? and is_answer ORDER BY rating',
+                    'SELECT id, content, for, rating FROM Feedback WHERE parent_id=? AND is_answer ORDER BY -rating',
                     [dispute_id])
                 for answer_id, content, is_for, rating in cursor.fetchall():
-                    if is_for is not None:
-                        if is_for:
-                            pluses += 1
-                        else:
-                            minuses += 1
                     if content:
                         answers.append((answer_id, content, rating))
 
                 # send messages
-                message = bot.send_message(user_id, '{0}➕ {1}➖\nВопрос: {2}\n\n{3}'.format(pluses, minuses, d_caption,
-                                                                                           d_content),
+                message = bot.send_message(user_id, 'Вопрос: {0}\n\n{1}'.format(d_caption, d_content),
                                            reply_markup=markup_common)
                 connect_message(message, dispute_id=dispute_id)
 
@@ -163,7 +166,7 @@ def send_stuff_by_state(user_id):
                 comments = []
                 pluses, minuses = 0, 0
                 cursor.execute(
-                    'select id, content, for, rating from Feedback where parent_id=? and not is_answer ORDER BY rating',
+                    'select id, content, for, rating from Feedback where parent_id=? and not is_answer ORDER BY -rating',
                     [answer_id])
                 for comment_id, content, is_for, rating in cursor.fetchall():
                     if is_for is not None:
@@ -183,7 +186,8 @@ def send_stuff_by_state(user_id):
 
                 for comment_id, content, rating, is_for in comments:
                     mess = bot.send_message(user_id, (
-                        '' if is_for is None else ('➕ ' if is_for else '➖ ')) + 'Коммент (id={1})({0}✔): {2}'.format(
+                        '' if is_for is None else (
+                            '➕ ' if is_for else '➖ ')) + 'Комментарий (id={1})({0}✔): {2}'.format(
                         round(rating, 2), comment_id, content),
                                             reply_to_message_id=message.message_id, reply_markup=markup_common)
                     connect_message(mess, feedback_id=comment_id)
@@ -197,7 +201,7 @@ def send_stuff_by_state(user_id):
                 comments = []
                 pluses, minuses = 0, 0
                 cursor.execute(
-                    'select id, content, for, rating from Feedback where parent_id=? and not is_answer ORDER BY rating',
+                    'select id, content, for, rating from Feedback where parent_id=? and not is_answer ORDER BY -rating',
                     [main_comment_id])
                 for comment_id, content, is_for, rating in cursor.fetchall():
                     if is_for is not None:
@@ -210,16 +214,17 @@ def send_stuff_by_state(user_id):
 
                 # send messages
                 message = bot.send_message(user_id, ('' if is_for is None else (
-                    '➕ ' if is_for else '➖ ')) + 'Коммент (id={3})({0}➕ {1}➖)({2}✔): {4}'.format(pluses, minuses,
-                                                                                                 round(a_rating, 2),
-                                                                                                 main_comment_id,
-                                                                                                 c_content),
+                    '➕ ' if is_for else '➖ ')) + 'Комментарий (id={3})({0}➕ {1}➖)({2}✔): {4}'.format(pluses, minuses,
+                                                                                                     round(a_rating, 2),
+                                                                                                     main_comment_id,
+                                                                                                     c_content),
                                            reply_markup=markup_common)
                 connect_message(message, feedback_id=main_comment_id)
 
                 for comment_id, content, rating, is_for in comments:
                     mess = bot.send_message(user_id, (
-                        '' if is_for is None else ('➕ ' if is_for else '➖ ')) + 'Коммент (id={1})({0}✔): {2}'.format(
+                        '' if is_for is None else (
+                            '➕ ' if is_for else '➖ ')) + 'Комментарий (id={1})({0}✔): {2}'.format(
                         round(rating, 2), comment_id, content),
                                             reply_to_message_id=message.message_id, reply_markup=markup_common)
                     connect_message(mess, feedback_id=comment_id)
@@ -234,7 +239,7 @@ def send_stuff_by_state(user_id):
                                             reply_markup=markup_common)
                     connect_message(mess, dispute_id=dispute_id)
                 if not new:
-                    bot.send_message(user_id, 'Новых вопросов нет)', reply_markup=markup_common)
+                    bot.send_message(user_id, 'Новых вопросов нет.', reply_markup=markup_common)
                     path.remove(step)
                     path = path[:-1]
                 else:
@@ -255,7 +260,7 @@ def send_stuff_by_state(user_id):
                     mess = bot.send_message(user_id, 'Вопрос №{}: {}\n{}'.format(dispute_id, caption, content))
                     connect_message(mess, dispute_id=dispute_id)
                 if not found:
-                    bot.send_message(user_id, 'По данному запросу вопросов не найдено')
+                    bot.send_message(user_id, 'По данному запросу вопросов не найдено.')
                     path.remove(step)
                     path = path[:-1]
                 else:
@@ -376,7 +381,7 @@ def reply_messages(message):
         content = text
 
     if is_answer and for_sign is not None:
-        bot.send_message(message.chat.id, 'Ты тупой? Нельзя оценивать вопрос, дубина',
+        bot.send_message(message.chat.id, 'Нельзя оценить вопрос.',
                          reply_markup=markup_common)
         cursor.close()
         return
@@ -385,10 +390,11 @@ def reply_messages(message):
     cursor.execute("insert into Feedback(user_id, for, parent_id, rating, content, is_answer) VALUES (?,?,?,0,?,?)",
                    params)
     sent_message = bot.send_message(message.chat.id,
-                                    (('Ответ' if is_answer else 'Коммент') + ' успешно создан') if content else (
-                                        'Ответ/коммент успешно оценён'),
+                                    (('Ответ' if is_answer else 'Комментарий') + ' успешно создан') if content else (
+                                        'Ответ/комментарий успешно оценён'),
                                     reply_markup=markup_common)
-    update_feedback_rating(feedback_id)
+    if not is_answer:
+        update_feedback_rating(feedback_id)
     feedback_id = cursor.lastrowid
     if content:
         connect_message(message, feedback_id=feedback_id)
