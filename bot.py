@@ -7,8 +7,8 @@ from telebot import types
 from config import token, db
 
 markup_common = types.ReplyKeyboardMarkup()
-markup_common.row('/🔍 Поиск', '/🗞 Новые вопросы', '/❓ Добавить вопрос')
-markup_common.row('/↩ Назад', '/⤵️ Открыть', '/⁉ Помощь')
+markup_common.row('🔍 Поиск', '🗞 Новые вопросы', '❓ Добавить вопрос')
+markup_common.row('↩ Назад', '⤵️ Открыть', '⁉ Помощь')
 
 
 apihelper.proxy = {
@@ -21,19 +21,20 @@ bot = telebot.TeleBot(token)
 
 help_text = '''Добро пожаловать в SolutionFinderBot. Чтобы создать дискуссию, нажмите "❓Добавить вопрос". \n
 Чтобы просмотреть новые вопросы, нажмите на кнопку "🗞 Новые вопросы". \n
-Чтобы найти вопросы по ключевому слову, нажмите на "🔍Поиск". \n
+Чтобы найти вопросы по ключевому слову, нажмите на "🔍 Поиск". \n
 Чтобы просмотреть ответы к вопросу, выберите вопрос и перешлите его  с нажатием на кнопку "⤵️ Открыть"\n
 Чтобы оценить  ответ или комментарий и прокомментировать, отправьте его с сообщением + или - и на новой строке напишите свой комментарий. \n
 '''
 
 
-@bot.message_handler(commands=['❓'])
-def search_from_menu_message(message):
+@bot.message_handler(func=lambda mess: str(mess.text).strip().startswith('❓'))
+def new_dis_from_menu_message(message):
     bot.send_message(message.from_user.id,
                      'Чтобы создать дискуссию, введите /new_dispute, после чего через пробел введите свой вопрос. Если хотите оставить пояснение к вопросу, введите его на новой строке после вопроса. ',
                      reply_markup=markup_common)
 
-@bot.message_handler(commands=['🔍'])
+
+@bot.message_handler(func=lambda mess: str(mess.text).strip().startswith('🔍'))
 def search_from_menu_message(message):
     bot.send_message(message.from_user.id,
                      'Чтобы найти вопросы по запросу, отправьте сообщение в виде:\n/search ваш запрос',
@@ -51,11 +52,13 @@ def search_message(message):
     send_stuff_by_state(message.from_user.id)
 
 
-@bot.message_handler(commands=['help', '⁉'])
+@bot.message_handler(
+    func=lambda mess: str(mess.text).strip().startswith('/help') or str(mess.text).strip().startswith('⁉'))
 def help_message(message):
     bot.send_message(message.chat.id, help_text, reply_markup=markup_common)
 
-@bot.message_handler(commands=['↩', '🔙'])
+
+@bot.message_handler(func=lambda mess: str(mess.text).strip().startswith('↩'))
 def back_command(message):
     cursor = db.cursor()
     cursor.execute('select state from User where id=?', [message.from_user.id])
@@ -71,7 +74,8 @@ def back_command(message):
     send_stuff_by_state(message.from_user.id)
 
 
-@bot.message_handler(commands=['⤵️'], func=lambda message: message.reply_to_message is not None)
+@bot.message_handler(
+    func=lambda message: message.reply_to_message is not None and str(message.text).strip().startswith('⤵️'))
 def open_command(message):
     cursor = db.cursor()
     text = str(message.text.strip())
@@ -103,7 +107,8 @@ def open_command(message):
     send_stuff_by_state(message.from_user.id)
 
 
-@bot.message_handler(commands=['🗞', 'feed'])
+@bot.message_handler(
+    func=lambda mess: str(mess.text).strip().startswith('/feed') or str(mess.text).strip().startswith('🗞'))
 def feed(message):
     cursor = db.cursor()
     cursor.execute('SELECT last_dispute_id FROM User WHERE id=?', [message.from_user.id])
@@ -329,6 +334,10 @@ def new_dispute(message):
         content = text.split('\n', 1)[1]
     except IndexError:
         pass
+    if len(content) + len(caption) > 160:
+        bot.send_message(message.chat.id, 'Нельзя создавать вопрос длиной более 160 символов')
+        cursor.close()
+        return
 
     if caption:
         cursor.execute(
